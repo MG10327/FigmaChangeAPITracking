@@ -1,0 +1,8 @@
+{
+  "watch": ["For Development"],
+  "notifications": {
+    "slack": true,
+    "email": false,
+    "emailSubject": "Figma update: For Development page changed"
+  }
+}
