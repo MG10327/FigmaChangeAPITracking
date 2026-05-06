@@ -29,9 +29,7 @@ jobs:
         run: |
           git config user.name "figma-watch-bot"
           git config user.email "bot@noreply.com"
+          git pull --rebase --autostash origin main
           git add figma-watch/snapshot.json
-          git stash
-          git pull --rebase origin main
-          git stash pop
           git diff --staged --quiet || git commit -m "chore: update figma snapshot [skip ci]"
           git push
