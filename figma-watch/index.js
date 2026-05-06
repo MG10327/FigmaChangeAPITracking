@@ -18,9 +18,9 @@ async function fetchFigmaFile() {
   return res.json();
 }
 
-function hashNode(node) {
-  const { children, ...props } = node;
-  return createHash('sha256').update(JSON.stringify(props)).digest('hex').slice(0, 8);
+function hashSubtree(node) {
+  // Hash the full subtree including all descendants so any nested change is detected
+  return createHash('sha256').update(JSON.stringify(node)).digest('hex').slice(0, 8);
 }
 
 function nodeUrl(nodeId) {
@@ -119,7 +119,7 @@ async function main() {
       const changedLayers = [];
 
       for (const layer of frame.children ?? []) {
-        const hash = hashNode(layer);
+        const hash = hashSubtree(layer);
         newSnapshot.pages[page.name].frames[frame.id][layer.id] = hash;
 
         const prevHash = prevPage?.frames?.[frame.id]?.[layer.id];
