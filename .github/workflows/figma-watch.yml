@@ -31,4 +31,5 @@ jobs:
           git config user.email "bot@noreply.com"
           git add figma-watch/snapshot.json
           git diff --staged --quiet || git commit -m "chore: update figma snapshot [skip ci]"
+          git pull --rebase origin main
           git push
