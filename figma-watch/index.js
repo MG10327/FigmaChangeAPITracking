@@ -27,6 +27,11 @@ function nodeUrl(nodeId) {
   return `https://www.figma.com/design/${FIGMA_FILE_KEY}?node-id=${nodeId.replace(':', '-')}`;
 }
 
+// Strip Figma's decorative page name prefixes (↳, ❖, leading spaces)
+function normalizePageName(name) {
+  return name.replace(/^[\s↳❖–-]+/, '').trim();
+}
+
 // Recursively collect all top-level frames, traversing into sections
 function collectFrames(nodes) {
   const frames = [];
@@ -116,12 +121,12 @@ async function main() {
   const newSnapshot = { lastChecked: new Date().toISOString(), pages: {} };
   const changes = {};
 
-  const allPageNames = figmaData.document.children.map(p => p.name);
-  console.log(`Pages found in file: ${JSON.stringify(allPageNames)}`);
+  const allPageNames = figmaData.document.children.map(p => normalizePageName(p.name));
+  console.log(`Pages found in file (normalized): ${JSON.stringify(allPageNames)}`);
   console.log(`Watching for: ${JSON.stringify(config.watch)}`);
 
   for (const page of figmaData.document.children) {
-    if (!config.watch.includes(page.name)) continue;
+    if (!config.watch.includes(normalizePageName(page.name))) continue;
 
     console.log(`Checking page: ${page.name}`);
     console.log(`  Top-level node types: ${[...new Set(page.children.map(n => n.type))].join(', ')}`);

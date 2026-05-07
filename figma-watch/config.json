@@ -1,5 +1,5 @@
 {
-  "watch": ["For Development"],
+  "watch": ["For Development", "Local components"],
   "notifications": {
     "slack": true,
     "email": false,
