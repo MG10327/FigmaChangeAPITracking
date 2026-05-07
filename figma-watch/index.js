@@ -19,7 +19,6 @@ async function fetchFigmaFile() {
 }
 
 function hashSubtree(node) {
-  // Hash the full subtree including all descendants so any nested change is detected
   return createHash('sha256').update(JSON.stringify(node)).digest('hex').slice(0, 8);
 }
 
@@ -27,14 +26,12 @@ function nodeUrl(nodeId) {
   return `https://www.figma.com/design/${FIGMA_FILE_KEY}?node-id=${nodeId.replace(':', '-')}`;
 }
 
-// Strip Figma's decorative page name prefixes (↳, ❖, leading spaces)
 function normalizePageName(name) {
   return name.replace(/^[\s↳❖–-]+/, '').trim();
 }
 
-// Collect all top-level trackable containers on a page.
-// Sections are tracked directly (not traversed into) so any change
-// inside a section — at any depth — is caught by hashing the full subtree.
+// Collect top-level containers. Sections are tracked as-is so any change
+// inside them at any depth is caught by hashing the full subtree.
 function collectContainers(nodes) {
   const containers = [];
   for (const node of nodes) {
@@ -50,6 +47,8 @@ function collectContainers(nodes) {
 async function sendSlack(changes) {
   if (!config.notifications.slack || !process.env.SLACK_WEBHOOK_URL) return;
 
+  const MAX_CONTAINERS = 20;
+
   const blocks = [
     {
       type: 'header',
@@ -58,32 +57,28 @@ async function sendSlack(changes) {
     { type: 'divider' }
   ];
 
-  for (const [pageName, frames] of Object.entries(changes)) {
+  for (const [pageName, containers] of Object.entries(changes)) {
+    const visible = containers.slice(0, MAX_CONTAINERS);
+    const overflow = containers.length - visible.length;
+
+    const lines = visible
+      .map(c => `• *<${nodeUrl(c.id)}|${c.name}>* ↗`)
+      .join('\n');
+
+    const overflowNote = overflow > 0
+      ? `\n_…and ${overflow} more changed containers_`
+      : '';
+
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Page: ${normalizePageName(pageName)}*` }
+      text: { type: 'mrkdwn', text: `*Page: ${normalizePageName(pageName)}*\n${lines}${overflowNote}` }
     });
-
-    for (const container of frames) {
-      blocks.push({
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `• *<${nodeUrl(container.id)}|${container.name}>* ↗`
-        }
-      });
-    }
   }
 
   blocks.push({ type: 'divider' });
   blocks.push({
     type: 'context',
-    elements: [
-      {
-        type: 'mrkdwn',
-        text: `Checked at ${new Date().toUTCString()}`
-      }
-    ]
+    elements: [{ type: 'mrkdwn', text: `Checked at ${new Date().toUTCString()}` }]
   });
 
   const res = await fetch(process.env.SLACK_WEBHOOK_URL, {
@@ -92,7 +87,10 @@ async function sendSlack(changes) {
     body: JSON.stringify({ blocks })
   });
 
-  if (!res.ok) throw new Error(`Slack webhook error: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Slack webhook error: ${res.status} — ${body}`);
+  }
   console.log('Slack notification sent.');
 }
 
@@ -107,33 +105,26 @@ async function main() {
 
   const snapshotPath = join(__dirname, 'snapshot.json');
   const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+  const isFirstRun = Object.keys(snapshot.pages).length === 0;
   const newSnapshot = { lastChecked: new Date().toISOString(), pages: {} };
   const changes = {};
-
-  const allPageNames = figmaData.document.children.map(p => normalizePageName(p.name));
-  console.log(`Pages found in file (normalized): ${JSON.stringify(allPageNames)}`);
-  console.log(`Watching for: ${JSON.stringify(config.watch)}`);
 
   for (const page of figmaData.document.children) {
     if (!config.watch.includes(normalizePageName(page.name))) continue;
 
-    console.log(`Checking page: ${page.name}`);
-    console.log(`  Top-level nodes: ${page.children.map(n => `${n.type}:"${n.name}"`).join(', ')}`);
-
+    console.log(`Checking page: ${normalizePageName(page.name)}`);
     newSnapshot.pages[page.name] = { frames: {} };
 
     const prevPage = snapshot.pages?.[page.name];
     const changedContainers = [];
     const containers = collectContainers(page.children);
 
-    console.log(`  Found ${containers.length} container(s): ${containers.map(c => `${c.type}:"${c.name}"`).join(', ')}`);
-
     for (const container of containers) {
       const hash = hashSubtree(container);
       newSnapshot.pages[page.name].frames[container.id] = hash;
 
       const prevHash = prevPage?.frames?.[container.id];
-      if (prevHash === undefined || prevHash !== hash) {
+      if (prevHash !== undefined && prevHash !== hash) {
         changedContainers.push({ id: container.id, name: container.name ?? container.type });
       }
     }
@@ -143,23 +134,31 @@ async function main() {
     }
   }
 
+  // Always write the snapshot so the commit step succeeds
   writeFileSync(snapshotPath, JSON.stringify(newSnapshot, null, 2));
-  console.log('Snapshot updated.');
+
+  if (isFirstRun) {
+    console.log('First run — baseline snapshot saved. No alert sent.');
+    return;
+  }
 
   if (Object.keys(changes).length === 0) {
-    console.log('No changes detected.');
+    console.log('Snapshot updated. No changes detected.');
     return;
   }
 
   console.log('Changes detected:');
   for (const [page, containers] of Object.entries(changes)) {
-    console.log(`  ${page}:`);
-    for (const container of containers) {
-      console.log(`    • ${container.name}`);
-    }
+    console.log(`  ${normalizePageName(page)}:`);
+    for (const c of containers) console.log(`    • ${c.name}`);
   }
 
-  await sendSlack(changes);
+  // Notify but don't let a Slack failure fail the whole job
+  try {
+    await sendSlack(changes);
+  } catch (err) {
+    console.error('Slack notification failed (snapshot was still saved):', err.message);
+  }
 }
 
 main().catch(err => {
