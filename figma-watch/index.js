@@ -33,32 +33,32 @@ function normalizePageName(name) {
   return name.replace(/^[\s↳❖–-]+/, '').trim();
 }
 
-// Walk the subtree storing a hash per node.
-// INSTANCE nodes are NOT recursed into — their children share IDs with the
-// master component definition (on a different page), so links would go to the
-// wrong place. Instead we hash the full INSTANCE subtree as one unit so any
-// override (text, color, etc.) inside it is still detected, and the link goes
-// to the instance itself on the correct page.
-function buildNodeMap(node, map, ancestorName) {
-  if (node.type === 'INSTANCE') {
-    // Hash full subtree so any override change is caught
-    const { children, ...props } = node;
-    const fullHash = createHash('sha256')
-      .update(JSON.stringify(node))
-      .digest('hex')
-      .slice(0, 8);
-    map[node.id] = { hash: fullHash, name: node.name || node.type, type: node.type, ancestor: ancestorName };
-    return;
-  }
+// Walk the full subtree storing a hash per node.
+//
+// Instance children share IDs with their master component definition (on a
+// different page), so a raw link to them goes to the wrong place. We solve
+// this by tracking a `safeLinkId`: the ID of the nearest ancestor that was
+// directly placed on the page. Once we enter an INSTANCE we lock the link ID
+// to that instance so every descendant's change still links to the right page.
+function buildNodeMap(node, map, ancestorName, ancestorId, safeLinkId = null) {
+  // If no safe link has been established yet, this node itself is safe to link
+  const myLinkId = safeLinkId ?? node.id;
 
   map[node.id] = {
     hash: hashNodeProps(node),
     name: node.name || node.type,
     type: node.type,
-    ancestor: ancestorName
+    ancestor: ancestorName,
+    ancestorId,
+    linkId: myLinkId
   };
+
+  // Once inside an INSTANCE, all descendants link back to that instance.
+  // Outside instances, pass the inherited safeLinkId through (null = use own).
+  const childLinkId = node.type === 'INSTANCE' ? myLinkId : safeLinkId;
+
   for (const child of node.children ?? []) {
-    buildNodeMap(child, map, ancestorName);
+    buildNodeMap(child, map, ancestorName, ancestorId, childLinkId);
   }
 }
 
@@ -68,7 +68,7 @@ function buildPageMap(pageChildren) {
   for (const node of pageChildren) {
     // Skip non-design nodes
     if (['LINE', 'SLICE'].includes(node.type)) continue;
-    buildNodeMap(node, map, node.name || node.type);
+    buildNodeMap(node, map, node.name || node.type, node.id);
   }
   return map;
 }
@@ -92,25 +92,33 @@ async function sendSlack(changes) {
       text: { type: 'mrkdwn', text: `*Page: ${normalizePageName(pageName)}*` }
     });
 
-    // groups is a Map: ancestorName -> array of changed nodes
-    for (const [ancestorName, nodes] of groups.entries()) {
+    // groups is a Map: ancestorId -> { name, nodes[] }
+    for (const [ancestorId, { name: ancestorName, nodes }] of groups.entries()) {
       const MAX = 10;
-      // If the only changed item IS the ancestor itself, just show one linked line
-      const isSelfOnly = nodes.length === 1 && nodes[0].name === ancestorName;
 
-      if (isSelfOnly) {
+      // Exclude the ancestor node itself from the child list — it's already the header
+      const children = nodes.filter(n => n.id !== ancestorId);
+
+      // If nothing changed except the ancestor container itself, show one linked line
+      if (children.length === 0) {
         blocks.push({
           type: 'section',
-          text: { type: 'mrkdwn', text: `• *<${nodeUrl(nodes[0].id)}|${ancestorName}>* ↗` }
+          text: { type: 'mrkdwn', text: `• *<${nodeUrl(ancestorId)}|${ancestorName}>* ↗` }
         });
         continue;
       }
 
-      const visible = nodes.slice(0, MAX);
-      const overflow = nodes.length - visible.length;
+      const visible = children.slice(0, MAX);
+      const overflow = children.length - visible.length;
 
+      // Children whose linkId differs from the ancestor get their own link;
+      // children that would link to the same place just show as plain text
       const lines = visible
-        .map(n => `      └ <${nodeUrl(n.id)}|${n.name}> ↗`)
+        .map(n =>
+          n.linkId !== ancestorId
+            ? `      └ <${nodeUrl(n.linkId)}|${n.name}> ↗`
+            : `      └ ${n.name}`
+        )
         .join('\n');
 
       const overflowNote = overflow > 0 ? `\n      └ _+${overflow} more_` : '';
@@ -119,7 +127,7 @@ async function sendSlack(changes) {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `• *<${nodeUrl(nodes[0].id)}|${ancestorName}>*\n${lines}${overflowNote}`
+          text: `• *<${nodeUrl(ancestorId)}|${ancestorName}>* ↗\n${lines}${overflowNote}`
         }
       });
     }
@@ -175,15 +183,16 @@ async function main() {
 
     if (isFirstRun) continue;
 
-    // Group changed nodes by their top-level ancestor
+    // Group changed nodes by their top-level ancestor (keyed by ancestorId)
+    // Map<ancestorId, { name: string, nodes: Array<{id, name, type, linkId}> }>
     const groups = new Map();
 
-    for (const [id, { hash, name, type, ancestor }] of Object.entries(currentMap)) {
+    for (const [id, { hash, name, type, ancestor, ancestorId, linkId }] of Object.entries(currentMap)) {
       const prevHash = prevMap[id];
       if (prevHash === undefined || prevHash === hash) continue;
 
-      if (!groups.has(ancestor)) groups.set(ancestor, []);
-      groups.get(ancestor).push({ id, name, type });
+      if (!groups.has(ancestorId)) groups.set(ancestorId, { name: ancestor, nodes: [] });
+      groups.get(ancestorId).nodes.push({ id, name, type, linkId });
     }
 
     if (groups.size > 0) {
@@ -206,7 +215,7 @@ async function main() {
   console.log('Changes detected:');
   for (const [page, groups] of Object.entries(changes)) {
     console.log(`  ${normalizePageName(page)}:`);
-    for (const [ancestor, nodes] of groups.entries()) {
+    for (const [, { name: ancestor, nodes }] of groups.entries()) {
       console.log(`    ${ancestor}:`);
       for (const n of nodes) console.log(`      • ${n.name} (${n.type})`);
     }
