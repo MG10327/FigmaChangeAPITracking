@@ -27,6 +27,19 @@ function nodeUrl(nodeId) {
   return `https://www.figma.com/design/${FIGMA_FILE_KEY}?node-id=${nodeId.replace(':', '-')}`;
 }
 
+// Recursively collect all top-level frames, traversing into sections
+function collectFrames(nodes) {
+  const frames = [];
+  for (const node of nodes) {
+    if (node.type === 'FRAME' || node.type === 'COMPONENT') {
+      frames.push(node);
+    } else if (node.type === 'SECTION') {
+      frames.push(...collectFrames(node.children ?? []));
+    }
+  }
+  return frames;
+}
+
 // ─── Slack ────────────────────────────────────────────────────────────────────
 
 async function sendSlack(changes) {
@@ -107,13 +120,17 @@ async function main() {
     if (!config.watch.includes(page.name)) continue;
 
     console.log(`Checking page: ${page.name}`);
+    console.log(`  Top-level node types: ${[...new Set(page.children.map(n => n.type))].join(', ')}`);
+
     newSnapshot.pages[page.name] = { frames: {} };
 
     const prevPage = snapshot.pages?.[page.name];
     const changedFrames = [];
+    const frames = collectFrames(page.children);
 
-    for (const frame of page.children) {
-      if (frame.type !== 'FRAME') continue;
+    console.log(`  Found ${frames.length} frame(s): ${frames.map(f => f.name).join(', ')}`);
+
+    for (const frame of frames) {
 
       newSnapshot.pages[page.name].frames[frame.id] = {};
       const changedLayers = [];
