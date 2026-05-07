@@ -116,6 +116,10 @@ async function main() {
   const newSnapshot = { lastChecked: new Date().toISOString(), pages: {} };
   const changes = {};
 
+  const allPageNames = figmaData.document.children.map(p => p.name);
+  console.log(`Pages found in file: ${JSON.stringify(allPageNames)}`);
+  console.log(`Watching for: ${JSON.stringify(config.watch)}`);
+
   for (const page of figmaData.document.children) {
     if (!config.watch.includes(page.name)) continue;
 
