@@ -18,8 +18,11 @@ async function fetchFigmaFile() {
   return res.json();
 }
 
-function hashSubtree(node) {
-  return createHash('sha256').update(JSON.stringify(node)).digest('hex').slice(0, 8);
+// Hash only the node's own properties — not its children.
+// This means a hash change = THIS node changed, not something inside it.
+function hashNodeProps(node) {
+  const { children, ...props } = node;
+  return createHash('sha256').update(JSON.stringify(props)).digest('hex').slice(0, 8);
 }
 
 function nodeUrl(nodeId) {
@@ -30,35 +33,36 @@ function normalizePageName(name) {
   return name.replace(/^[\s↳❖–-]+/, '').trim();
 }
 
-const TRACKABLE = ['FRAME', 'COMPONENT', 'INSTANCE', 'COMPONENT_SET', 'SECTION'];
-
-// Returns a flat list of { sectionName, node } pairs to track.
-// For SECTIONs we go one level deeper so we can report and link to the
-// specific child (e.g. "Food & Drink › Desktop") instead of the whole section.
-// For everything else we track the node directly.
-function collectTrackable(nodes, parentSection = null) {
-  const items = [];
-  for (const node of nodes) {
-    if (!TRACKABLE.includes(node.type)) continue;
-    if (node.type === 'SECTION') {
-      for (const child of node.children ?? []) {
-        if (TRACKABLE.includes(child.type)) {
-          items.push({ sectionName: node.name, node: child });
-        }
-      }
-    } else {
-      items.push({ sectionName: parentSection, node });
-    }
+// Walk the full subtree of a top-level node, storing a hash for every
+// individual node. `ancestorName` is the top-level container name used
+// for grouping in the alert (e.g. "Food & Drink").
+function buildNodeMap(node, map, ancestorName) {
+  map[node.id] = {
+    hash: hashNodeProps(node),
+    name: node.name || node.type,
+    type: node.type,
+    ancestor: ancestorName
+  };
+  for (const child of node.children ?? []) {
+    buildNodeMap(child, map, ancestorName);
   }
-  return items;
+}
+
+// Build a flat map of every node on a page, keyed by node ID.
+function buildPageMap(pageChildren) {
+  const map = {};
+  for (const node of pageChildren) {
+    // Skip non-design nodes
+    if (['LINE', 'SLICE'].includes(node.type)) continue;
+    buildNodeMap(node, map, node.name || node.type);
+  }
+  return map;
 }
 
 // ─── Slack ────────────────────────────────────────────────────────────────────
 
 async function sendSlack(changes) {
   if (!config.notifications.slack || !process.env.SLACK_WEBHOOK_URL) return;
-
-  const MAX_CONTAINERS = 20;
 
   const blocks = [
     {
@@ -68,22 +72,32 @@ async function sendSlack(changes) {
     { type: 'divider' }
   ];
 
-  for (const [pageName, containers] of Object.entries(changes)) {
-    const visible = containers.slice(0, MAX_CONTAINERS);
-    const overflow = containers.length - visible.length;
-
-    const lines = visible
-      .map(c => `• *<${nodeUrl(c.id)}|${c.name}>* ↗`)
-      .join('\n');
-
-    const overflowNote = overflow > 0
-      ? `\n_…and ${overflow} more changed containers_`
-      : '';
-
+  for (const [pageName, groups] of Object.entries(changes)) {
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Page: ${normalizePageName(pageName)}*\n${lines}${overflowNote}` }
+      text: { type: 'mrkdwn', text: `*Page: ${normalizePageName(pageName)}*` }
     });
+
+    // groups is a Map: ancestorName -> array of changed nodes
+    for (const [ancestorName, nodes] of groups.entries()) {
+      const MAX = 10;
+      const visible = nodes.slice(0, MAX);
+      const overflow = nodes.length - visible.length;
+
+      const lines = visible
+        .map(n => `      └ <${nodeUrl(n.id)}|${n.name}> ↗`)
+        .join('\n');
+
+      const overflowNote = overflow > 0 ? `\n      └ _+${overflow} more_` : '';
+
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `• *<${nodeUrl(nodes[0]?.ancestorId || nodes[0]?.id)}|${ancestorName}>*\n${lines}${overflowNote}`
+        }
+      });
+    }
   }
 
   blocks.push({ type: 'divider' });
@@ -124,29 +138,34 @@ async function main() {
     if (!config.watch.includes(normalizePageName(page.name))) continue;
 
     console.log(`Checking page: ${normalizePageName(page.name)}`);
-    newSnapshot.pages[page.name] = { frames: {} };
 
-    const prevPage = snapshot.pages?.[page.name];
-    const changedContainers = [];
-    const items = collectTrackable(page.children);
+    const currentMap = buildPageMap(page.children);
+    const prevMap = snapshot.pages?.[page.name]?.nodes ?? {};
 
-    for (const { sectionName, node } of items) {
-      const hash = hashSubtree(node);
-      newSnapshot.pages[page.name].frames[node.id] = hash;
+    newSnapshot.pages[page.name] = {
+      nodes: Object.fromEntries(
+        Object.entries(currentMap).map(([id, { hash }]) => [id, hash])
+      )
+    };
 
-      const prevHash = prevPage?.frames?.[node.id];
-      if (prevHash !== undefined && prevHash !== hash) {
-        const label = sectionName ? `${sectionName} › ${node.name}` : node.name;
-        changedContainers.push({ id: node.id, name: label });
-      }
+    if (isFirstRun) continue;
+
+    // Group changed nodes by their top-level ancestor
+    const groups = new Map();
+
+    for (const [id, { hash, name, type, ancestor }] of Object.entries(currentMap)) {
+      const prevHash = prevMap[id];
+      if (prevHash === undefined || prevHash === hash) continue;
+
+      if (!groups.has(ancestor)) groups.set(ancestor, []);
+      groups.get(ancestor).push({ id, name, type });
     }
 
-    if (changedContainers.length > 0) {
-      changes[page.name] = changedContainers;
+    if (groups.size > 0) {
+      changes[page.name] = groups;
     }
   }
 
-  // Always write the snapshot so the commit step succeeds
   writeFileSync(snapshotPath, JSON.stringify(newSnapshot, null, 2));
 
   if (isFirstRun) {
@@ -160,12 +179,14 @@ async function main() {
   }
 
   console.log('Changes detected:');
-  for (const [page, containers] of Object.entries(changes)) {
+  for (const [page, groups] of Object.entries(changes)) {
     console.log(`  ${normalizePageName(page)}:`);
-    for (const c of containers) console.log(`    • ${c.name}`);
+    for (const [ancestor, nodes] of groups.entries()) {
+      console.log(`    ${ancestor}:`);
+      for (const n of nodes) console.log(`      • ${n.name} (${n.type})`);
+    }
   }
 
-  // Notify but don't let a Slack failure fail the whole job
   try {
     await sendSlack(changes);
   } catch (err) {
