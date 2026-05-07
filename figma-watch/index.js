@@ -32,17 +32,17 @@ function normalizePageName(name) {
   return name.replace(/^[\s↳❖–-]+/, '').trim();
 }
 
-// Recursively collect all top-level artboard-like nodes, traversing into sections
-function collectFrames(nodes) {
-  const frames = [];
+// Collect all top-level trackable containers on a page.
+// Sections are tracked directly (not traversed into) so any change
+// inside a section — at any depth — is caught by hashing the full subtree.
+function collectContainers(nodes) {
+  const containers = [];
   for (const node of nodes) {
-    if (['FRAME', 'COMPONENT', 'INSTANCE', 'COMPONENT_SET'].includes(node.type)) {
-      frames.push(node);
-    } else if (node.type === 'SECTION') {
-      frames.push(...collectFrames(node.children ?? []));
+    if (['FRAME', 'COMPONENT', 'INSTANCE', 'COMPONENT_SET', 'SECTION'].includes(node.type)) {
+      containers.push(node);
     }
   }
-  return frames;
+  return containers;
 }
 
 // ─── Slack ────────────────────────────────────────────────────────────────────
@@ -64,29 +64,12 @@ async function sendSlack(changes) {
       text: { type: 'mrkdwn', text: `*Page: ${normalizePageName(pageName)}*` }
     });
 
-    for (const frame of frames) {
-      const named = frame.layers.filter(l => l.name);
-      const unnamed = frame.layers.filter(l => !l.name);
-      const MAX_LAYERS = 8;
-
-      const visibleLayers = named.slice(0, MAX_LAYERS);
-      const overflow = named.length - visibleLayers.length + unnamed.length;
-
-      const layerLines = visibleLayers
-        .map(l => `      └ <${nodeUrl(l.id)}|${l.name}> ↗`)
-        .join('\n');
-
-      const overflowNote = overflow > 0
-        ? `\n      └ _+${overflow} more changed_ (<${nodeUrl(frame.id)}|View frame ↗>)`
-        : unnamed.length
-          ? `\n      └ ${unnamed.length} unnamed layer${unnamed.length > 1 ? 's' : ''} changed  (<${nodeUrl(frame.id)}|View frame ↗>)`
-          : '';
-
+    for (const container of frames) {
       blocks.push({
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `• *<${nodeUrl(frame.id)}|${frame.name}>*\n${layerLines}${overflowNote}`
+          text: `• *<${nodeUrl(container.id)}|${container.name}>* ↗`
         }
       });
     }
@@ -140,33 +123,23 @@ async function main() {
     newSnapshot.pages[page.name] = { frames: {} };
 
     const prevPage = snapshot.pages?.[page.name];
-    const changedFrames = [];
-    const frames = collectFrames(page.children);
+    const changedContainers = [];
+    const containers = collectContainers(page.children);
 
-    console.log(`  Found ${frames.length} frame(s): ${frames.map(f => f.name).join(', ')}`);
+    console.log(`  Found ${containers.length} container(s): ${containers.map(c => `${c.type}:"${c.name}"`).join(', ')}`);
 
-    for (const frame of frames) {
+    for (const container of containers) {
+      const hash = hashSubtree(container);
+      newSnapshot.pages[page.name].frames[container.id] = hash;
 
-      newSnapshot.pages[page.name].frames[frame.id] = {};
-      const changedLayers = [];
-
-      for (const layer of frame.children ?? []) {
-        const hash = hashSubtree(layer);
-        newSnapshot.pages[page.name].frames[frame.id][layer.id] = hash;
-
-        const prevHash = prevPage?.frames?.[frame.id]?.[layer.id];
-        if (prevHash === undefined || prevHash !== hash) {
-          changedLayers.push({ id: layer.id, name: layer.name ?? null });
-        }
-      }
-
-      if (changedLayers.length > 0) {
-        changedFrames.push({ id: frame.id, name: frame.name, layers: changedLayers });
+      const prevHash = prevPage?.frames?.[container.id];
+      if (prevHash === undefined || prevHash !== hash) {
+        changedContainers.push({ id: container.id, name: container.name ?? container.type });
       }
     }
 
-    if (changedFrames.length > 0) {
-      changes[page.name] = changedFrames;
+    if (changedContainers.length > 0) {
+      changes[page.name] = changedContainers;
     }
   }
 
@@ -179,10 +152,10 @@ async function main() {
   }
 
   console.log('Changes detected:');
-  for (const [page, frames] of Object.entries(changes)) {
+  for (const [page, containers] of Object.entries(changes)) {
     console.log(`  ${page}:`);
-    for (const frame of frames) {
-      console.log(`    • ${frame.name} (${frame.layers.length} layer change${frame.layers.length > 1 ? 's' : ''})`);
+    for (const container of containers) {
+      console.log(`    • ${container.name}`);
     }
   }
 
