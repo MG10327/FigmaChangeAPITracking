@@ -33,10 +33,24 @@ function normalizePageName(name) {
   return name.replace(/^[\s↳❖–-]+/, '').trim();
 }
 
-// Walk the full subtree of a top-level node, storing a hash for every
-// individual node. `ancestorName` is the top-level container name used
-// for grouping in the alert (e.g. "Food & Drink").
+// Walk the subtree storing a hash per node.
+// INSTANCE nodes are NOT recursed into — their children share IDs with the
+// master component definition (on a different page), so links would go to the
+// wrong place. Instead we hash the full INSTANCE subtree as one unit so any
+// override (text, color, etc.) inside it is still detected, and the link goes
+// to the instance itself on the correct page.
 function buildNodeMap(node, map, ancestorName) {
+  if (node.type === 'INSTANCE') {
+    // Hash full subtree so any override change is caught
+    const { children, ...props } = node;
+    const fullHash = createHash('sha256')
+      .update(JSON.stringify(node))
+      .digest('hex')
+      .slice(0, 8);
+    map[node.id] = { hash: fullHash, name: node.name || node.type, type: node.type, ancestor: ancestorName };
+    return;
+  }
+
   map[node.id] = {
     hash: hashNodeProps(node),
     name: node.name || node.type,
