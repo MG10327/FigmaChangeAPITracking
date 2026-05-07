@@ -61,26 +61,32 @@ async function sendSlack(changes) {
   for (const [pageName, frames] of Object.entries(changes)) {
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Page: ${pageName}*` }
+      text: { type: 'mrkdwn', text: `*Page: ${normalizePageName(pageName)}*` }
     });
 
     for (const frame of frames) {
       const named = frame.layers.filter(l => l.name);
       const unnamed = frame.layers.filter(l => !l.name);
+      const MAX_LAYERS = 8;
 
-      const layerLines = named
+      const visibleLayers = named.slice(0, MAX_LAYERS);
+      const overflow = named.length - visibleLayers.length + unnamed.length;
+
+      const layerLines = visibleLayers
         .map(l => `      └ <${nodeUrl(l.id)}|${l.name}> ↗`)
         .join('\n');
 
-      const unnamedNote = unnamed.length
-        ? `\n      └ ${unnamed.length} unnamed layer${unnamed.length > 1 ? 's' : ''} changed  (<${nodeUrl(frame.id)}|View frame ↗>)`
-        : '';
+      const overflowNote = overflow > 0
+        ? `\n      └ _+${overflow} more changed_ (<${nodeUrl(frame.id)}|View frame ↗>)`
+        : unnamed.length
+          ? `\n      └ ${unnamed.length} unnamed layer${unnamed.length > 1 ? 's' : ''} changed  (<${nodeUrl(frame.id)}|View frame ↗>)`
+          : '';
 
       blocks.push({
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `• *<${nodeUrl(frame.id)}|${frame.name}>*\n${layerLines}${unnamedNote}`
+          text: `• *<${nodeUrl(frame.id)}|${frame.name}>*\n${layerLines}${overflowNote}`
         }
       });
     }
