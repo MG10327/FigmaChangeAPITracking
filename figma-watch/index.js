@@ -32,11 +32,11 @@ function normalizePageName(name) {
   return name.replace(/^[\s↳❖–-]+/, '').trim();
 }
 
-// Recursively collect all top-level frames, traversing into sections
+// Recursively collect all top-level artboard-like nodes, traversing into sections
 function collectFrames(nodes) {
   const frames = [];
   for (const node of nodes) {
-    if (node.type === 'FRAME' || node.type === 'COMPONENT') {
+    if (['FRAME', 'COMPONENT', 'INSTANCE', 'COMPONENT_SET'].includes(node.type)) {
       frames.push(node);
     } else if (node.type === 'SECTION') {
       frames.push(...collectFrames(node.children ?? []));
@@ -135,7 +135,7 @@ async function main() {
     if (!config.watch.includes(normalizePageName(page.name))) continue;
 
     console.log(`Checking page: ${page.name}`);
-    console.log(`  Top-level node types: ${[...new Set(page.children.map(n => n.type))].join(', ')}`);
+    console.log(`  Top-level nodes: ${page.children.map(n => `${n.type}:"${n.name}"`).join(', ')}`);
 
     newSnapshot.pages[page.name] = { frames: {} };
 
