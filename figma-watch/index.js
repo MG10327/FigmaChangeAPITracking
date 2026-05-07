@@ -30,16 +30,27 @@ function normalizePageName(name) {
   return name.replace(/^[\s↳❖–-]+/, '').trim();
 }
 
-// Collect top-level containers. Sections are tracked as-is so any change
-// inside them at any depth is caught by hashing the full subtree.
-function collectContainers(nodes) {
-  const containers = [];
+const TRACKABLE = ['FRAME', 'COMPONENT', 'INSTANCE', 'COMPONENT_SET', 'SECTION'];
+
+// Returns a flat list of { sectionName, node } pairs to track.
+// For SECTIONs we go one level deeper so we can report and link to the
+// specific child (e.g. "Food & Drink › Desktop") instead of the whole section.
+// For everything else we track the node directly.
+function collectTrackable(nodes, parentSection = null) {
+  const items = [];
   for (const node of nodes) {
-    if (['FRAME', 'COMPONENT', 'INSTANCE', 'COMPONENT_SET', 'SECTION'].includes(node.type)) {
-      containers.push(node);
+    if (!TRACKABLE.includes(node.type)) continue;
+    if (node.type === 'SECTION') {
+      for (const child of node.children ?? []) {
+        if (TRACKABLE.includes(child.type)) {
+          items.push({ sectionName: node.name, node: child });
+        }
+      }
+    } else {
+      items.push({ sectionName: parentSection, node });
     }
   }
-  return containers;
+  return items;
 }
 
 // ─── Slack ────────────────────────────────────────────────────────────────────
@@ -117,15 +128,16 @@ async function main() {
 
     const prevPage = snapshot.pages?.[page.name];
     const changedContainers = [];
-    const containers = collectContainers(page.children);
+    const items = collectTrackable(page.children);
 
-    for (const container of containers) {
-      const hash = hashSubtree(container);
-      newSnapshot.pages[page.name].frames[container.id] = hash;
+    for (const { sectionName, node } of items) {
+      const hash = hashSubtree(node);
+      newSnapshot.pages[page.name].frames[node.id] = hash;
 
-      const prevHash = prevPage?.frames?.[container.id];
+      const prevHash = prevPage?.frames?.[node.id];
       if (prevHash !== undefined && prevHash !== hash) {
-        changedContainers.push({ id: container.id, name: container.name ?? container.type });
+        const label = sectionName ? `${sectionName} › ${node.name}` : node.name;
+        changedContainers.push({ id: node.id, name: label });
       }
     }
 
