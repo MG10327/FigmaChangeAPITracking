@@ -95,6 +95,17 @@ async function sendSlack(changes) {
     // groups is a Map: ancestorName -> array of changed nodes
     for (const [ancestorName, nodes] of groups.entries()) {
       const MAX = 10;
+      // If the only changed item IS the ancestor itself, just show one linked line
+      const isSelfOnly = nodes.length === 1 && nodes[0].name === ancestorName;
+
+      if (isSelfOnly) {
+        blocks.push({
+          type: 'section',
+          text: { type: 'mrkdwn', text: `• *<${nodeUrl(nodes[0].id)}|${ancestorName}>* ↗` }
+        });
+        continue;
+      }
+
       const visible = nodes.slice(0, MAX);
       const overflow = nodes.length - visible.length;
 
@@ -108,7 +119,7 @@ async function sendSlack(changes) {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `• *<${nodeUrl(nodes[0]?.ancestorId || nodes[0]?.id)}|${ancestorName}>*\n${lines}${overflowNote}`
+          text: `• *<${nodeUrl(nodes[0].id)}|${ancestorName}>*\n${lines}${overflowNote}`
         }
       });
     }
