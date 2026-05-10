@@ -223,10 +223,6 @@ async function sendSlackDM(slackUserId, comment) {
 
 async function processComments(snapshot, newSnapshot) {
   if (!config.notifications?.comments) return;
-  if (!process.env.SLACK_BOT_TOKEN) {
-    console.log('SLACK_BOT_TOKEN not set — skipping comment DMs.');
-    return;
-  }
 
   console.log('Fetching Figma comments...');
   const comments = await fetchFigmaComments();
@@ -234,10 +230,16 @@ async function processComments(snapshot, newSnapshot) {
   const seenIds = new Set(snapshot.comments?.seenIds ?? []);
   const isFirstCommentRun = !snapshot.comments;
 
+  // Always persist seen IDs regardless of whether the bot token is available
   newSnapshot.comments = { seenIds: comments.map(c => c.id) };
 
   if (isFirstCommentRun) {
     console.log('First comment run — baseline saved. No DMs sent.');
+    return;
+  }
+
+  if (!process.env.SLACK_BOT_TOKEN) {
+    console.log('SLACK_BOT_TOKEN not set — skipping comment DMs.');
     return;
   }
 
@@ -256,11 +258,29 @@ async function processComments(snapshot, newSnapshot) {
   }
 
   for (const comment of newComments) {
-    const mentions = comment.mentions ?? [];
-    if (mentions.length === 0) continue;
+    console.log(`  Comment ${comment.id} by ${comment.user?.name}: "${comment.message}"`);
+    console.log(`  mentions field:`, JSON.stringify(comment.mentions ?? null));
 
-    for (const mentionedUser of mentions) {
-      const name = mentionedUser.name;
+    // Primary: use the mentions array from the API response
+    // Fallback: parse @Name patterns from the message text (Figma sometimes omits the field)
+    let mentionedNames = (comment.mentions ?? []).map(m => m.name).filter(Boolean);
+
+    if (mentionedNames.length === 0 && comment.message) {
+      const parsed = [...comment.message.matchAll(/@([A-Za-z]+(?: [A-Za-z]+)*)/g)]
+        .map(m => m[1].trim())
+        .filter(name => slackUserMap[name]);
+      if (parsed.length > 0) {
+        console.log(`  No mentions field — parsed from message text: ${parsed.join(', ')}`);
+        mentionedNames = parsed;
+      }
+    }
+
+    if (mentionedNames.length === 0) {
+      console.log(`  No mentions found — skipping.`);
+      continue;
+    }
+
+    for (const name of mentionedNames) {
       const slackId = slackUserMap[name];
       if (!slackId) {
         console.warn(`  No Slack match for Figma user "${name}" — skipping DM.`);
