@@ -28,5 +28,5 @@ jobs:
           FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           # Add one line per project matching the slackWebhook name in config.json
-          SLACK_WEBHOOK_PROJECT_NAME: ${{ secrets.SLACK_WEBHOOK_PROJECT_1 }}
+          SLACK_WEBHOOK_PROJECT_1: ${{ secrets.SLACK_WEBHOOK_PROJECT_1 }}
         run: node figma-watch/index.js
