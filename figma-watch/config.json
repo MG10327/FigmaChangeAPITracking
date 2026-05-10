@@ -8,8 +8,8 @@
       "_label_description_": "A human-readable name for this project, shown in Slack notifications.",
       "watch": ["For Development", "Local components"],
       "_watch_description_": "The Figma page names to monitor for design changes.",
-      "slackWebhook": "https://hooks.slack.com/services/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L",
-      "_slackWebhook_description_": "The Slack webhook URL for this team's channel. Paste the URL directly here."
+      "slackWebhook": "SLACK_WEBHOOK_PROJECT_1",
+      "_slackWebhook_description_": "The name of the GitHub Actions secret holding this team's Slack webhook URL. Add one secret per project in the repo settings."
     }
   ],
   "notifications": {
