@@ -112,12 +112,14 @@ async function sendSlack(changes) {
       const overflow = children.length - visible.length;
 
       // Children whose linkId differs from the ancestor get their own link;
-      // children that would link to the same place just show as plain text
+      // children that would link to the same place just show as plain text.
+      // Prefix with an icon based on the change type.
+      const changeIcon = n => n.change === 'added' ? '➕' : n.change === 'deleted' ? '🗑️' : '✏️';
       const lines = visible
         .map(n =>
           n.linkId !== ancestorId
-            ? `      └ <${nodeUrl(n.linkId)}|${n.name}> ↗`
-            : `      └ ${n.name}`
+            ? `      └ ${changeIcon(n)} <${nodeUrl(n.linkId)}|${n.name}> ↗`
+            : `      └ ${changeIcon(n)} ${n.name}`
         )
         .join('\n');
 
@@ -177,22 +179,48 @@ async function main() {
 
     newSnapshot.pages[page.name] = {
       nodes: Object.fromEntries(
-        Object.entries(currentMap).map(([id, { hash }]) => [id, hash])
+        Object.entries(currentMap).map(([id, data]) => [id, data])
       )
     };
 
     if (isFirstRun) continue;
 
     // Group changed nodes by their top-level ancestor (keyed by ancestorId)
-    // Map<ancestorId, { name: string, nodes: Array<{id, name, type, linkId}> }>
+    // Map<ancestorId, { name: string, nodes: Array<{id, name, type, linkId, change}> }>
     const groups = new Map();
 
-    for (const [id, { hash, name, type, ancestor, ancestorId, linkId }] of Object.entries(currentMap)) {
-      const prevHash = prevMap[id];
-      if (prevHash === undefined || prevHash === hash) continue;
+    const addToGroup = (ancestorId, ancestorName, node) => {
+      if (!groups.has(ancestorId)) groups.set(ancestorId, { name: ancestorName, nodes: [] });
+      groups.get(ancestorId).nodes.push(node);
+    };
 
-      if (!groups.has(ancestorId)) groups.set(ancestorId, { name: ancestor, nodes: [] });
-      groups.get(ancestorId).nodes.push({ id, name, type, linkId });
+    // Added or modified nodes
+    for (const [id, { hash, name, type, ancestor, ancestorId, linkId }] of Object.entries(currentMap)) {
+      const prevEntry = prevMap[id];
+      // prevEntry may be a plain hash string (old snapshot format) or an object (new format)
+      const prevHash = prevEntry && typeof prevEntry === 'object' ? prevEntry.hash : prevEntry;
+
+      if (prevHash === hash) continue; // unchanged
+
+      const change = prevHash === undefined ? 'added' : 'modified';
+      addToGroup(ancestorId, ancestor, { id, name, type, linkId, change });
+    }
+
+    // Deleted nodes — iterate prevMap for IDs that no longer exist
+    for (const [id, prevEntry] of Object.entries(prevMap)) {
+      if (currentMap[id] !== undefined) continue; // still exists
+
+      const meta = prevEntry && typeof prevEntry === 'object'
+        ? prevEntry
+        : { name: id, type: 'UNKNOWN', ancestor: id, ancestorId: id, linkId: id };
+
+      addToGroup(meta.ancestorId, meta.ancestor, {
+        id,
+        name: meta.name,
+        type: meta.type,
+        linkId: meta.linkId,
+        change: 'deleted'
+      });
     }
 
     if (groups.size > 0) {
@@ -217,7 +245,7 @@ async function main() {
     console.log(`  ${normalizePageName(page)}:`);
     for (const [, { name: ancestor, nodes }] of groups.entries()) {
       console.log(`    ${ancestor}:`);
-      for (const n of nodes) console.log(`      • ${n.name} (${n.type})`);
+      for (const n of nodes) console.log(`      • ${n.name} (${n.type}) [${n.change}]`);
     }
   }
 
