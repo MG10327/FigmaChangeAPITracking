@@ -25,11 +25,21 @@ async function fetchFigmaComments(fileKey) {
   return data.comments ?? [];
 }
 
-// Hash only the node's own properties — not its children.
-// This means a hash change = THIS node changed, not something inside it.
+// Position/transform props that change automatically due to auto-layout
+// repositioning when siblings are added or deleted — not meaningful design changes.
+const LAYOUT_REFLOW_PROPS = new Set([
+  'x', 'y', 'relativeTransform', 'absoluteTransform',
+  'absoluteBoundingBox', 'absoluteRenderBounds'
+]);
+
+// Hash only the node's own properties — not its children, and not layout
+// reflow props that auto-update when siblings move in an auto-layout container.
 function hashNodeProps(node) {
   const { children, ...props } = node;
-  return createHash('sha256').update(JSON.stringify(props)).digest('hex').slice(0, 8);
+  const filtered = Object.fromEntries(
+    Object.entries(props).filter(([k]) => !LAYOUT_REFLOW_PROPS.has(k))
+  );
+  return createHash('sha256').update(JSON.stringify(filtered)).digest('hex').slice(0, 8);
 }
 
 function nodeUrl(fileKey, nodeId) {
