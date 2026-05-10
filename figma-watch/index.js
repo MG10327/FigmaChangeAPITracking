@@ -229,6 +229,24 @@ async function processFilePages(fileConfig, figmaData, fileSnapshot, newFileSnap
 
     if (isFirstRun) continue;
 
+    // Determine which top-level ancestor frames were themselves added or deleted.
+    // When an ancestor is added/deleted, all its children flood the diff as added/deleted too.
+    // We suppress the children in that case and only report the ancestor itself.
+    const ancestorLevelChange = new Map(); // ancestorId -> 'added' | 'deleted'
+
+    for (const [id, { ancestor, ancestorId }] of Object.entries(currentMap)) {
+      if (id !== ancestorId) continue;
+      const prevEntry = prevMap[id];
+      const prevHash = prevEntry && typeof prevEntry === 'object' ? prevEntry.hash : prevEntry;
+      if (prevHash === undefined) ancestorLevelChange.set(id, 'added');
+    }
+
+    for (const [id, prevEntry] of Object.entries(prevMap)) {
+      if (currentMap[id] !== undefined) continue;
+      const meta = prevEntry && typeof prevEntry === 'object' ? prevEntry : null;
+      if (meta && meta.ancestorId === id) ancestorLevelChange.set(id, 'deleted');
+    }
+
     const groups = new Map();
     const addToGroup = (ancestorId, ancestorName, node) => {
       if (!groups.has(ancestorId)) groups.set(ancestorId, { name: ancestorName, nodes: [] });
@@ -239,7 +257,10 @@ async function processFilePages(fileConfig, figmaData, fileSnapshot, newFileSnap
       const prevEntry = prevMap[id];
       const prevHash = prevEntry && typeof prevEntry === 'object' ? prevEntry.hash : prevEntry;
       if (prevHash === hash) continue;
-      addToGroup(ancestorId, ancestor, { id, name, type, linkId, change: prevHash === undefined ? 'added' : 'modified' });
+      const change = prevHash === undefined ? 'added' : 'modified';
+      // If the ancestor was added, only add the ancestor node itself — skip all descendants
+      if (ancestorLevelChange.get(ancestorId) === 'added' && id !== ancestorId) continue;
+      addToGroup(ancestorId, ancestor, { id, name, type, linkId, change });
     }
 
     for (const [id, prevEntry] of Object.entries(prevMap)) {
@@ -247,6 +268,8 @@ async function processFilePages(fileConfig, figmaData, fileSnapshot, newFileSnap
       const meta = prevEntry && typeof prevEntry === 'object'
         ? prevEntry
         : { name: id, type: 'UNKNOWN', ancestor: id, ancestorId: id, linkId: id };
+      // If the ancestor was deleted, only add the ancestor node itself — skip all descendants
+      if (ancestorLevelChange.get(meta.ancestorId) === 'deleted' && id !== meta.ancestorId) continue;
       addToGroup(meta.ancestorId, meta.ancestor, { id, name: meta.name, type: meta.type, linkId: meta.linkId, change: 'deleted' });
     }
 
