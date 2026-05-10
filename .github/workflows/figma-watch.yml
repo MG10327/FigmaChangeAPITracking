@@ -2,14 +2,12 @@ name: Figma Change Watch
 
 on:
   schedule:
-    - cron: '*/20 * * * *'  # runs every 30 minutes
+    - cron: '*/20 * * * *'  # runs every 20 minutes
   workflow_dispatch:          # allows manual trigger from the GitHub Actions UI
 
 jobs:
   check-figma:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -18,6 +16,13 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Restore snapshot cache
+        uses: actions/cache@v4
+        with:
+          path: figma-watch/snapshot.json
+          key: figma-snapshot-${{ github.run_id }}
+          restore-keys: figma-snapshot-
+
       - name: Run Figma watch
         env:
           FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
@@ -25,12 +30,3 @@ jobs:
           # Per-team Slack webhook URLs — add one per entry in config.json
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: node figma-watch/index.js
-
-      - name: Commit updated snapshot
-        run: |
-          git config user.name "figma-watch-bot"
-          git config user.email "bot@noreply.com"
-          git pull --rebase --autostash origin main
-          git add figma-watch/snapshot.json
-          git diff --staged --quiet || git commit -m "chore: update figma snapshot [skip ci]"
-          git push
