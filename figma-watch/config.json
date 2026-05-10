@@ -2,7 +2,9 @@
   "watch": ["For Development", "Local components"],
   "notifications": {
     "slack": true,
+    "comments": true,
     "email": false,
     "emailSubject": "Figma update: For Development page changed"
-  }
+  },
+  "nameOverrides": {}
 }

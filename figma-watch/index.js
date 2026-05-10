@@ -73,6 +73,15 @@ function buildPageMap(pageChildren) {
   return map;
 }
 
+async function fetchFigmaComments() {
+  const res = await fetch(`https://api.figma.com/v1/files/${FIGMA_FILE_KEY}/comments`, {
+    headers: { 'X-Figma-Token': process.env.FIGMA_TOKEN }
+  });
+  if (!res.ok) throw new Error(`Figma comments API error: ${res.status} ${res.statusText}`);
+  const data = await res.json();
+  return data.comments ?? [];
+}
+
 // ─── Slack ────────────────────────────────────────────────────────────────────
 
 async function sendSlack(changes) {
@@ -154,6 +163,119 @@ async function sendSlack(changes) {
   console.log('Slack notification sent.');
 }
 
+async function buildSlackUserMap() {
+  const res = await fetch('https://slack.com/api/users.list', {
+    headers: { 'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}` }
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(`Slack users.list error: ${data.error}`);
+
+  const map = {};
+  for (const member of data.members ?? []) {
+    if (member.deleted || member.is_bot) continue;
+    // Index by both real_name and display_name so either can match
+    if (member.profile.real_name) map[member.profile.real_name] = member.id;
+    if (member.profile.display_name && member.profile.display_name !== member.profile.real_name) {
+      map[member.profile.display_name] = member.id;
+    }
+  }
+  return map;
+}
+
+async function sendSlackDM(slackUserId, comment) {
+  const nodeId = comment.client_meta?.node_id;
+  const link = nodeId ? nodeUrl(nodeId) : `https://www.figma.com/design/${FIGMA_FILE_KEY}`;
+  const author = comment.user?.name ?? 'Someone';
+
+  const res = await fetch('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}`
+    },
+    body: JSON.stringify({
+      channel: slackUserId,
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${author}* mentioned you in a Figma comment:\n> ${comment.message}`
+          }
+        },
+        {
+          type: 'actions',
+          elements: [
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: 'View in Figma ↗', emoji: true },
+              url: link
+            }
+          ]
+        }
+      ]
+    })
+  });
+
+  const data = await res.json();
+  if (!data.ok) throw new Error(`Slack DM error: ${data.error}`);
+}
+
+async function processComments(snapshot, newSnapshot) {
+  if (!config.notifications?.comments) return;
+  if (!process.env.SLACK_BOT_TOKEN) {
+    console.log('SLACK_BOT_TOKEN not set — skipping comment DMs.');
+    return;
+  }
+
+  console.log('Fetching Figma comments...');
+  const comments = await fetchFigmaComments();
+
+  const seenIds = new Set(snapshot.comments?.seenIds ?? []);
+  const isFirstCommentRun = !snapshot.comments;
+
+  newSnapshot.comments = { seenIds: comments.map(c => c.id) };
+
+  if (isFirstCommentRun) {
+    console.log('First comment run — baseline saved. No DMs sent.');
+    return;
+  }
+
+  const newComments = comments.filter(c => !seenIds.has(c.id));
+  if (newComments.length === 0) {
+    console.log('No new comments.');
+    return;
+  }
+
+  console.log(`Found ${newComments.length} new comment(s). Building Slack user map...`);
+  const slackUserMap = await buildSlackUserMap();
+
+  // Apply manual overrides on top of auto-matched names (for edge cases / duplicates)
+  for (const [figmaName, slackId] of Object.entries(config.nameOverrides ?? {})) {
+    slackUserMap[figmaName] = slackId;
+  }
+
+  for (const comment of newComments) {
+    const mentions = comment.mentions ?? [];
+    if (mentions.length === 0) continue;
+
+    for (const mentionedUser of mentions) {
+      const name = mentionedUser.name;
+      const slackId = slackUserMap[name];
+      if (!slackId) {
+        console.warn(`  No Slack match for Figma user "${name}" — skipping DM.`);
+        continue;
+      }
+      console.log(`  DMing ${name} about comment by ${comment.user?.name}`);
+      try {
+        await sendSlackDM(slackId, comment);
+      } catch (err) {
+        console.error(`  Failed to DM ${name}:`, err.message);
+      }
+    }
+  }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -226,6 +348,13 @@ async function main() {
     if (groups.size > 0) {
       changes[page.name] = groups;
     }
+  }
+
+  // Process comments and mutate newSnapshot.comments before writing
+  try {
+    await processComments(snapshot, newSnapshot);
+  } catch (err) {
+    console.error('Comment processing failed (snapshot will still be saved):', err.message);
   }
 
   writeFileSync(snapshotPath, JSON.stringify(newSnapshot, null, 2));

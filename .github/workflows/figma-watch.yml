@@ -2,7 +2,7 @@ name: Figma Change Watch
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # runs every 30 minutes
+    - cron: '*/20 * * * *'  # runs every 30 minutes
   workflow_dispatch:          # allows manual trigger from the GitHub Actions UI
 
 jobs:
@@ -23,6 +23,7 @@ jobs:
           FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
           FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
         run: node figma-watch/index.js
 
       - name: Commit updated snapshot
