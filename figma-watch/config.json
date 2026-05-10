@@ -6,7 +6,8 @@
       "key": "RfCKFlP2fiNGWu1dNYjEyM",
       "label": "Project Name",
       "watch": ["For Development", "Local components"],
-      "slackWebhook": "SLACK_WEBHOOK_URL"
+      "slackWebhook": "https://hooks.slack.com/services/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L",
+      "_description_": "The Slack Webhook URL for the channel this project's Figma updates get posted to."
     }
   ],
   "notifications": {
