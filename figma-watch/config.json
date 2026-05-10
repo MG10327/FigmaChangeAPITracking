@@ -2,19 +2,21 @@
   "_description": "Add one entry per Figma file. Each file posts design change alerts to its own Slack channel. Comment @mentions trigger DMs to the mentioned person via the bot.",
   "files": [
     {
-      "_description": "key: Figma file ID from the URL. slackWebhook: name of the GitHub secret holding that team's Slack channel webhook URL.",
-      "key": "RfCKFlP2fiNGWu1dNYjEyM",
-      "_key_description_": "The Figma file ID from the URL. This is the ID of the Figma file that will be watched for changes.",
+      "figmaFileKey": "RfCKFlP2fiNGWu1dNYjEyM",
+      "_figmaFileKey_description_": "The file ID from the Figma URL — figma.com/design/THIS_PART/...",
       "label": "Project Name",
+      "_label_description_": "A human-readable name for this project, shown in Slack notifications.",
       "watch": ["For Development", "Local components"],
+      "_watch_description_": "The Figma page names to monitor for design changes.",
       "slackWebhook": "https://hooks.slack.com/services/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L",
-      "_slackWebhook_description_": "The Slack Webhook URL for the channel this project's Figma updates get posted to."
+      "_slackWebhook_description_": "The Slack webhook URL for this team's channel. Paste the URL directly here."
     }
   ],
   "notifications": {
-    "comments": true
+    "comments": true,
+    "_comments_description_": "When true, @mentions in Figma comments trigger a Slack DM to the mentioned person."
   },
   "slackDmNameOverrides": {
-    "_description": "Only needed if someone's full name differs between Figma and Slack. Key is their Figma display name, value is their Slack user ID (found in their Slack profile). Example: 'Marcus Graham': 'U0ABC123'"
+    "_slackDmNameOverrides_description_": "Only needed if someone's name differs between Figma and Slack. Key is their Figma display name, value is their Slack user ID (from their Slack profile). Example: 'Marcus Graham': 'U0ABC123'"
   }
 }

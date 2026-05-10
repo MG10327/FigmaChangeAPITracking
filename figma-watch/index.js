@@ -207,8 +207,9 @@ async function sendSlackDM(slackUserId, comment, fileKey, label) {
 // ─── Per-file processors ──────────────────────────────────────────────────────
 
 async function processFilePages(fileConfig, figmaData, fileSnapshot, newFileSnapshot) {
-  const { key: fileKey, label, watch, slackWebhook } = fileConfig;
-  const webhookUrl = process.env[slackWebhook];
+  const { figmaFileKey: fileKey, label, watch, slackWebhook } = fileConfig;
+  // Support either a raw URL or the name of a GitHub secret env var
+  const webhookUrl = slackWebhook.startsWith('https://') ? slackWebhook : process.env[slackWebhook];
 
   const isFirstRun = !fileSnapshot.pages || Object.keys(fileSnapshot.pages).length === 0;
   newFileSnapshot.pages = {};
@@ -286,7 +287,7 @@ async function processFilePages(fileConfig, figmaData, fileSnapshot, newFileSnap
 async function processFileComments(fileConfig, fileSnapshot, newFileSnapshot, slackUserMap) {
   if (!config.notifications?.comments) return;
 
-  const { key: fileKey, label } = fileConfig;
+  const { figmaFileKey: fileKey, label } = fileConfig;
 
   console.log(`  [${label}] Fetching comments...`);
   const comments = await fetchFigmaComments(fileKey);
@@ -375,7 +376,7 @@ async function main() {
   }
 
   for (const fileConfig of config.files) {
-    const { key: fileKey, label } = fileConfig;
+    const { figmaFileKey: fileKey, label } = fileConfig;
     console.log(`\nProcessing: ${label} (${fileKey})`);
 
     const fileSnapshot = snapshot.files?.[fileKey] ?? {};
