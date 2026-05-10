@@ -266,11 +266,12 @@ async function processComments(snapshot, newSnapshot) {
     let mentionedNames = (comment.mentions ?? []).map(m => m.name).filter(Boolean);
 
     if (mentionedNames.length === 0 && comment.message) {
-      const parsed = [...comment.message.matchAll(/@([A-Za-z]+(?: [A-Za-z]+)*)/g)]
-        .map(m => m[1].trim())
-        .filter(name => slackUserMap[name]);
+      // Figma doesn't populate the mentions field — match known Slack names against message text
+      const parsed = Object.keys(slackUserMap).filter(name =>
+        comment.message.includes(`@${name}`)
+      );
       if (parsed.length > 0) {
-        console.log(`  No mentions field — parsed from message text: ${parsed.join(', ')}`);
+        console.log(`  No mentions field — matched from message text: ${parsed.join(', ')}`);
         mentionedNames = parsed;
       }
     }
