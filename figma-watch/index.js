@@ -178,7 +178,7 @@ async function buildSlackUserMap() {
 async function sendSlackDM(slackUserId, comment, fileKey, label) {
   const nodeId = comment.client_meta?.node_id;
   const link = nodeId ? nodeUrl(fileKey, nodeId) : `https://www.figma.com/design/${fileKey}`;
-  const author = comment.user?.name ?? 'Someone';
+  const author = comment.user?.name ?? comment.user?.handle ?? comment.created_by?.name ?? comment.created_by?.handle ?? 'Someone';
 
   const res = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
@@ -349,7 +349,8 @@ async function processFileComments(fileConfig, fileSnapshot, newFileSnapshot, sl
   console.log(`  [${label}] Found ${newComments.length} new comment(s).`);
 
   for (const comment of newComments) {
-    console.log(`    Comment ${comment.id} by ${comment.user?.name}: "${comment.message}"`);
+    console.log(`    Comment ${comment.id} — user object:`, JSON.stringify(comment.user ?? null));
+    console.log(`    Message: "${comment.message}"`);
 
     let mentionedNames = (comment.mentions ?? []).map(m => m.name).filter(Boolean);
 
