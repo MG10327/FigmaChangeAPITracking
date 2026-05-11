@@ -17,6 +17,6 @@
     "_comments_description_": "When true, @mentions in Figma comments trigger a Slack DM to the mentioned person."
   },
   "slackDmNameOverrides": {
-    "_slackDmNameOverrides_description_": "Only needed if someone's name differs between Figma and Slack. Key is their Figma display name, value is their Slack user ID (from their Slack profile). Example: 'Marcus Graham': 'U0ABC123'"
+    "_slackDmNameOverrides_description_": "Only needed if someone's Figma handle differs from their Slack display name. Key is their Figma handle (shown in Figma account settings), value is their Slack user ID (from their Slack profile). Example: 'marcusg': 'U0ABC123'"
   }
 }
