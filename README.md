@@ -23,7 +23,7 @@ Edit `figma-watch/config.json`. Add one entry to `files` per Figma file you want
 {
   "files": [
     {
-      "figmaFileKey": "RfCKFlP2fiNGWu1dNYjEyM",
+      "figmaFileKey": "YourFigmaFileDesignKeyHere",
       "label": "Project Name",
       "watch": ["For Development", "Local components"],
       "slackWebhook": "SLACK_WEBHOOK_PROJECT_1"
