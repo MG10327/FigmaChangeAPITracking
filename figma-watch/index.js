@@ -61,21 +61,26 @@ const SECTION_FRAME_TYPES = new Set(['FRAME', 'COMPONENT', 'COMPONENT_SET']);
 // directly placed on the page. Once we enter an INSTANCE we lock the link ID
 // to that instance so every descendant's change still links to the right page.
 //
-// `sectionId`/`sectionName` control how changes are grouped in notifications.
-// A top-level page child is its own section. Any frame-type direct child of a
-// top-level node (e.g. "Event Detail Page - Desktop" inside a "Pages" organiser
-// frame) also becomes its own section, so organiser frames are split into their
-// individual page-design sections rather than lumped together.
-function buildNodeMap(node, map, ancestorName, ancestorId, safeLinkId = null, sectionId = null, sectionName = null, isChildOfTopLevel = false) {
+// `sectionId`/`sectionName` control notification grouping. The rules are:
+//   1. Top-level page children are always their own section.
+//   2. If a top-level child is a FRAME (organiser/container like a "Pages" frame),
+//      its direct COMPONENT/FRAME children each become their own section — so the
+//      organiser splits into individual page-design sections.
+//   3. COMPONENT top-level children (actual page designs) do NOT promote their
+//      children further — layers inside a page design stay grouped under that page.
+//
+// This matches Figma's visual convention: FRAME = structural container (#),
+// COMPONENT = a placed page design (◇).
+function buildNodeMap(node, map, ancestorName, ancestorId, safeLinkId = null, sectionId = null, sectionName = null, parentIsOrganizerFrame = false) {
   const myLinkId = safeLinkId ?? node.id;
 
-  // Top-level nodes are their own section; frame-type children of top-level
-  // nodes each become a new section; everything else inherits the parent section.
   let mySectionId, mySectionName;
   if (sectionId === null) {
+    // Top-level node — always its own section.
     mySectionId = node.id;
     mySectionName = node.name || node.type;
-  } else if (isChildOfTopLevel && SECTION_FRAME_TYPES.has(node.type)) {
+  } else if (parentIsOrganizerFrame && SECTION_FRAME_TYPES.has(node.type)) {
+    // Frame/component child of a top-level FRAME organiser → promote to its own section.
     mySectionId = node.id;
     mySectionName = node.name || node.type;
   } else {
@@ -95,12 +100,12 @@ function buildNodeMap(node, map, ancestorName, ancestorId, safeLinkId = null, se
   };
 
   const childLinkId = node.type === 'INSTANCE' ? myLinkId : safeLinkId;
-  // Children of a top-level node get the "child of top-level" flag so that
-  // frame-type children can promote themselves to section anchors above.
-  const childIsChildOfTopLevel = sectionId === null;
+  // Only pass the organiser flag down one level, and only when the current node
+  // is a top-level FRAME. COMPONENT page designs never promote their own children.
+  const childParentIsOrganizerFrame = sectionId === null && node.type === 'FRAME';
 
   for (const child of node.children ?? []) {
-    buildNodeMap(child, map, ancestorName, ancestorId, childLinkId, mySectionId, mySectionName, childIsChildOfTopLevel);
+    buildNodeMap(child, map, ancestorName, ancestorId, childLinkId, mySectionId, mySectionName, childParentIsOrganizerFrame);
   }
 }
 
