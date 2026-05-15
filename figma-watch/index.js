@@ -50,6 +50,9 @@ function normalizePageName(name) {
   return name.replace(/^[\s↳❖–-]+/, '').trim();
 }
 
+// Frame-like node types whose direct children can become section anchors.
+const SECTION_FRAME_TYPES = new Set(['FRAME', 'COMPONENT', 'COMPONENT_SET']);
+
 // Walk the full subtree storing a hash per node.
 //
 // Instance children share IDs with their master component definition (on a
@@ -57,8 +60,28 @@ function normalizePageName(name) {
 // this by tracking a `safeLinkId`: the ID of the nearest ancestor that was
 // directly placed on the page. Once we enter an INSTANCE we lock the link ID
 // to that instance so every descendant's change still links to the right page.
-function buildNodeMap(node, map, ancestorName, ancestorId, safeLinkId = null) {
+//
+// `sectionId`/`sectionName` control how changes are grouped in notifications.
+// A top-level page child is its own section. Any frame-type direct child of a
+// top-level node (e.g. "Event Detail Page - Desktop" inside a "Pages" organiser
+// frame) also becomes its own section, so organiser frames are split into their
+// individual page-design sections rather than lumped together.
+function buildNodeMap(node, map, ancestorName, ancestorId, safeLinkId = null, sectionId = null, sectionName = null, isChildOfTopLevel = false) {
   const myLinkId = safeLinkId ?? node.id;
+
+  // Top-level nodes are their own section; frame-type children of top-level
+  // nodes each become a new section; everything else inherits the parent section.
+  let mySectionId, mySectionName;
+  if (sectionId === null) {
+    mySectionId = node.id;
+    mySectionName = node.name || node.type;
+  } else if (isChildOfTopLevel && SECTION_FRAME_TYPES.has(node.type)) {
+    mySectionId = node.id;
+    mySectionName = node.name || node.type;
+  } else {
+    mySectionId = sectionId;
+    mySectionName = sectionName;
+  }
 
   map[node.id] = {
     hash: hashNodeProps(node),
@@ -66,13 +89,18 @@ function buildNodeMap(node, map, ancestorName, ancestorId, safeLinkId = null) {
     type: node.type,
     ancestor: ancestorName,
     ancestorId,
+    sectionId: mySectionId,
+    sectionName: mySectionName,
     linkId: myLinkId
   };
 
   const childLinkId = node.type === 'INSTANCE' ? myLinkId : safeLinkId;
+  // Children of a top-level node get the "child of top-level" flag so that
+  // frame-type children can promote themselves to section anchors above.
+  const childIsChildOfTopLevel = sectionId === null;
 
   for (const child of node.children ?? []) {
-    buildNodeMap(child, map, ancestorName, ancestorId, childLinkId);
+    buildNodeMap(child, map, ancestorName, ancestorId, childLinkId, mySectionId, mySectionName, childIsChildOfTopLevel);
   }
 }
 
@@ -254,29 +282,30 @@ async function processFilePages(fileConfig, figmaData, fileSnapshot, newFileSnap
     }
 
     const groups = new Map();
-    const addToGroup = (ancestorId, ancestorName, node) => {
-      if (!groups.has(ancestorId)) groups.set(ancestorId, { name: ancestorName, nodes: [] });
-      groups.get(ancestorId).nodes.push(node);
+    const addToGroup = (sectionId, sectionName, node) => {
+      if (!groups.has(sectionId)) groups.set(sectionId, { name: sectionName, nodes: [] });
+      groups.get(sectionId).nodes.push(node);
     };
 
-    for (const [id, { hash, name, type, ancestor, ancestorId, linkId }] of Object.entries(currentMap)) {
+    for (const [id, { hash, name, type, ancestor, ancestorId, sectionId, sectionName, linkId }] of Object.entries(currentMap)) {
       const prevEntry = prevMap[id];
       const prevHash = prevEntry && typeof prevEntry === 'object' ? prevEntry.hash : prevEntry;
       if (prevHash === hash) continue;
       const change = prevHash === undefined ? 'added' : 'modified';
       // If the ancestor was added, only add the ancestor node itself — skip all descendants
       if (ancestorLevelChange.get(ancestorId) === 'added' && id !== ancestorId) continue;
-      addToGroup(ancestorId, ancestor, { id, name, type, linkId, change });
+      addToGroup(sectionId, sectionName, { id, name, type, linkId, change });
     }
 
     for (const [id, prevEntry] of Object.entries(prevMap)) {
       if (currentMap[id] !== undefined) continue;
       const meta = prevEntry && typeof prevEntry === 'object'
         ? prevEntry
-        : { name: id, type: 'UNKNOWN', ancestor: id, ancestorId: id, linkId: id };
+        : { name: id, type: 'UNKNOWN', ancestor: id, ancestorId: id, sectionId: id, sectionName: id, linkId: id };
       // If the ancestor was deleted, only add the ancestor node itself — skip all descendants
       if (ancestorLevelChange.get(meta.ancestorId) === 'deleted' && id !== meta.ancestorId) continue;
-      addToGroup(meta.ancestorId, meta.ancestor, { id, name: meta.name, type: meta.type, linkId: meta.linkId, change: 'deleted' });
+      // Fall back to ancestorId/ancestor for old snapshot entries that predate sectionId
+      addToGroup(meta.sectionId ?? meta.ancestorId, meta.sectionName ?? meta.ancestor, { id, name: meta.name, type: meta.type, linkId: meta.linkId, change: 'deleted' });
     }
 
     if (groups.size > 0) changes[page.name] = groups;
