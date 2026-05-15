@@ -97,42 +97,37 @@ async function sendSlackChannel(webhookUrl, fileKey, label, changes) {
   ];
 
   for (const [pageName, groups] of Object.entries(changes)) {
-    blocks.push({
-      type: 'section',
-      text: { type: 'mrkdwn', text: `*Page: ${normalizePageName(pageName)}*` }
-    });
-
     for (const [ancestorId, { name: ancestorName, nodes }] of groups.entries()) {
       const MAX = 10;
       const children = nodes.filter(n => n.id !== ancestorId);
+      const changeIcon = n => n.change === 'added' ? '➕' : n.change === 'deleted' ? '🗑️' : '✏️';
 
       if (children.length === 0) {
         blocks.push({
           type: 'section',
-          text: { type: 'mrkdwn', text: `• *<${nodeUrl(fileKey, ancestorId)}|${ancestorName}>* ↗` }
+          text: { type: 'mrkdwn', text: `*<${nodeUrl(fileKey, ancestorId)}|${ancestorName}>* ↗` }
         });
         continue;
       }
 
       const visible = children.slice(0, MAX);
       const overflow = children.length - visible.length;
-      const changeIcon = n => n.change === 'added' ? '➕' : n.change === 'deleted' ? '🗑️' : '✏️';
 
       const lines = visible
         .map(n =>
           n.linkId !== ancestorId
-            ? `      └ ${changeIcon(n)} <${nodeUrl(fileKey, n.linkId)}|${n.name}> ↗`
-            : `      └ ${changeIcon(n)} ${n.name}`
+            ? `  └ ${changeIcon(n)} <${nodeUrl(fileKey, n.linkId)}|${n.name}> ↗`
+            : `  └ ${changeIcon(n)} ${n.name}`
         )
         .join('\n');
 
-      const overflowNote = overflow > 0 ? `\n      └ _+${overflow} more_` : '';
+      const overflowNote = overflow > 0 ? `\n  └ _+${overflow} more_` : '';
 
       blocks.push({
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `• *<${nodeUrl(fileKey, ancestorId)}|${ancestorName}>* ↗\n${lines}${overflowNote}`
+          text: `*<${nodeUrl(fileKey, ancestorId)}|${ancestorName}>* ↗\n${lines}${overflowNote}`
         }
       });
     }
